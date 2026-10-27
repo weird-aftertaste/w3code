@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 import { createInterface } from 'node:readline';
 const args = process.argv.slice(2);
+if (args.includes('--version')) {
+  console.log('v18.13.2');
+  process.exit(0);
+}
 process.stdout.write(JSON.stringify({ type: 'ready', supportedProtocolVersions: [1, 2] }) + '\n');
 function emit(frame) { process.stdout.write(JSON.stringify(frame) + '\n'); }
 for await (const line of createInterface({ input: process.stdin })) {

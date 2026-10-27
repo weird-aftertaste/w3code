@@ -62,3 +62,20 @@ test('reassembles OMP protocol v2 rpc_chunk frames into one JSONL result', async
   assert.equal(result.data.huge.length, 250000);
   assert.equal(h.messages.some(m => m.type === 'rpc_chunk'), false);
 });
+
+
+test('passes plain-text --version output and exit code through to T3 health check', async () => {
+  const proc = spawn(process.execPath, [shim, '--version'], {
+    env: { ...process.env, OMP_REAL_BINARY: fakeOmp }, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const chunks = [];
+  const errs = [];
+  proc.stdout.on('data', data => chunks.push(data));
+  proc.stderr.on('data', data => errs.push(data));
+  const exitCode = await new Promise((resolve, reject) => {
+    proc.once('error', reject);
+    proc.once('exit', resolve);
+  });
+  assert.equal(exitCode, 0, Buffer.concat(errs).toString());
+  assert.equal(Buffer.concat(chunks).toString().trim(), 'v18.13.2');
+});

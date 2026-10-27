@@ -13,6 +13,9 @@ const NEGOTIATE_ID = '__t3code_omp_bridge_protocol_v2__';
 const MAX_REASSEMBLED_BYTES = 64 * 1024 * 1024;
 const MAX_BUFFER_CHARS = MAX_REASSEMBLED_BYTES * 2;
 const BINARY = process.env.OMP_REAL_BINARY || 'omp';
+// Health checks such as `--version` emit plain text, not JSONL RPC frames.
+const RAW_CLI_OUTPUT = process.argv.slice(2).some(arg =>
+  ['--version', '-v', '--help', '-h'].includes(arg));
 
 function adaptArguments(args) {
   const output = [];
@@ -33,6 +36,8 @@ const child = spawn(BINARY, adaptArguments(process.argv.slice(2)), {
   stdio: ['pipe', 'pipe', 'inherit'],
   windowsHide: true,
 });
+
+if (RAW_CLI_OUTPUT) child.stdout.pipe(process.stdout);
 
 let exited = false;
 let promptStatus = 'completed';
@@ -146,10 +151,12 @@ child.on('exit', (code, signal) => {
   process.stdin.pause();
 });
 child.stdout.on('data', data => {
+  if (RAW_CLI_OUTPUT) return;
   try { stdoutBuffer = consume(stdoutDecoder, stdoutBuffer, data, processStdoutLine); }
   catch (error) { shutdown(error.message); }
 });
 child.stdout.on('end', () => {
+  if (RAW_CLI_OUTPUT) return;
   stdoutBuffer += stdoutDecoder.end();
   if (stdoutBuffer.trim()) processStdoutLine(stdoutBuffer);
 });
@@ -157,10 +164,12 @@ child.stdin.on('error', error => {
   if (error.code !== 'EPIPE') shutdown(`OMP stdin: ${error.message}`);
 });
 process.stdin.on('data', data => {
+  if (RAW_CLI_OUTPUT) return;
   try { stdinBuffer = consume(stdinDecoder, stdinBuffer, data, processStdinLine); }
   catch (error) { shutdown(error.message); }
 });
 process.stdin.on('end', () => {
+  if (RAW_CLI_OUTPUT) return;
   stdinBuffer += stdinDecoder.end();
   if (stdinBuffer.trim()) processStdinLine(stdinBuffer);
   child.stdin.end();
@@ -169,4 +178,4 @@ process.on('SIGINT', () => { if (child.pid) child.kill('SIGINT'); });
 process.on('SIGTERM', () => { if (child.pid) child.kill('SIGTERM'); });
 
 // Opt into OMP's lossless chunked output before regular T3 RPC commands.
-sendToOmp({ id: NEGOTIATE_ID, type: 'negotiate_protocol', protocolVersion: 2 });
+if (!RAW_CLI_OUTPUT) sendToOmp({ id: NEGOTIATE_ID, type: 'negotiate_protocol', protocolVersion: 2 });

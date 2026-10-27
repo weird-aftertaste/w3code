@@ -8,6 +8,7 @@ The shim is based on the public OMP RPC protocol (see `can1357/oh-my-pi/docs/rpc
 - maps Pi's `--session <file>` to OMP's `--resume <file>`;
 - maps Pi `get_commands` to OMP `get_available_commands`;
 - maps OMP `session_settled` to the Pi `agent_settled` completion event;
+- passes through plain-text CLI health checks (`--version`, `--help`) unchanged;
 - negotiates OMP RPC protocol v2 and reassembles lossless `rpc_chunk` responses;
 - forwards other JSONL commands, events and streamed output unchanged.
 
@@ -27,7 +28,7 @@ From the root of a T3 Code checkout (after applying the patch):
 npm install -g ./tools/omp-bridge
 ```
 
-This installs the `omp-t3-bridge` executable via npm, including a Windows `.cmd` launcher.
+This installs the `omp-t3-bridge` executable via npm, including a Windows `.cmd` launcher. After updates, reinstall the package with `npm install -g ./tools/omp-bridge`; the bridge now supports T3's plain-text `--version` health check.
 
 Then in **T3 Code → Settings → Providers**, create an **additional Pi instance** (do not replace the normal one):
 
