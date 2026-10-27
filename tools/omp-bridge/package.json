@@ -1,0 +1,17 @@
+{
+  "name": "t3code-omp-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal Oh My Pi RPC compatibility bridge for T3 Code's Pi provider",
+  "bin": {
+    "omp-t3-bridge": "./bin/omp-t3-bridge.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
