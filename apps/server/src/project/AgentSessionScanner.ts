@@ -1156,7 +1156,7 @@ export const make = Effect.gen(function* () {
           const binary = typeof config === "object" && config !== null &&
             "binaryPath" in config ? config.binaryPath : undefined;
           return typeof binary === "string" &&
-            /(?:^|[/\\\\])omp-t3-bridge(?:\\.cmd|\\.exe)?$/i.test(binary.trim());
+            /(?:^|[/\\])omp-t3-bridge(?:\.cmd|\.exe)?$/i.test(binary.trim());
         })
         .map(([instanceId, config]) => ({
           instanceId: ProviderInstanceId.make(instanceId),
@@ -1426,7 +1426,7 @@ export const make = Effect.gen(function* () {
       for (const transcript of candidate.transcripts) {
         if (
           transcript.mtimeMs === null ||
-          transcript.mtimeMs < cutoffMs ||
+          (candidate.source !== "omp" && transcript.mtimeMs < cutoffMs) ||
           transcript.mtimeMs > nowMs
         ) {
           continue;

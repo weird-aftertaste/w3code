@@ -50,7 +50,7 @@ const persistence = Layer.mergeAll(
 function candidate(
   modelSelection: typeof CODEX_MODEL_SELECTION,
   providerSessionId: string,
-  provider: "codex" | "claudeAgent" = "codex",
+  provider: "codex" | "claudeAgent" | "omp" = "codex",
 ) {
   const providerInstanceId = modelSelection.instanceId;
   return {
@@ -237,6 +237,35 @@ const makeImporter = Effect.fn(function* (
   const importer = Context.get(context, AgentSessionImporter.AgentSessionImporter);
   return { run: importer.importRecentAgentThreads({ projectId }), published };
 });
+
+it.effect("imports existing OMP session as Pi and resumes by source file path", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+    const source = candidate(
+      { ...CODEX_MODEL_SELECTION, instanceId: ProviderInstanceId.make("omp-bridge"), model: "default" },
+      "omp-session-uuid",
+      "omp",
+    );
+    const threadId = importId(source);
+    const importer = yield* makeImporter([source]);
+    expect(yield* importer.run).toEqual({ importedCount: 1, skippedCount: 0 });
+    const result = yield* projections.getThreadRecords(threadId, ["providerThreads", "messages"]);
+    const providerThread = result.providerThreads[0];
+    expect(providerThread?.driver).toBe(ProviderDriverKind.make("pi"));
+    expect(providerThread?.nativeThreadRef).toMatchObject({
+      driver: ProviderDriverKind.make("pi"),
+      nativeId: source.source.filePath,
+      strength: "strong",
+    });
+    expect(result.messages.map(message => message.text)).toEqual(["Fix it", "Fixed"]);
+    expect(Option.getOrThrow(yield* runtimes.getByThreadId({ threadId }))).toMatchObject({
+      providerName: ProviderDriverKind.make("pi"),
+      providerInstanceId: source.source.providerInstanceId,
+      resumeCursor: { threadId, resume: source.source.filePath },
+    });
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
 
 it.effect(
   "ignores owned sessions, including archived and deleted threads, but imports other instances and unowned sessions",
