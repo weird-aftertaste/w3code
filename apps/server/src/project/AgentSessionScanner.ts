@@ -320,6 +320,8 @@ function parseAgentSessionRecords(
   if (input.source === "omp") {
     const session = records.find((record) => record.type === "session");
     if (!session?.id || (session.version !== 2 && session.version !== 3)) return null;
+    // Recent OMP files begin with a fixed-width title slot before the header.
+    const titleSlot = records.find((record) => record.type === "title");
 
     // Only import the active branch: OMP persists abandoned/alternative branches too.
     const byId = new Map(records.flatMap((record) =>
@@ -337,7 +339,7 @@ function parseAgentSessionRecords(
       entry = entry.parentId === null ? undefined : byId.get(entry.parentId);
       if (entry === undefined && branch.at(-1)?.parentId !== null) return null;
     }
-    records = [session, ...branch.reverse()];
+    records = [...(titleSlot ? [titleSlot] : []), session, ...branch.reverse()];
   }
 
   const fallbackTimestamp = DateTime.formatIso(DateTime.makeUnsafe(input.lastActiveAtMs));
@@ -346,6 +348,7 @@ function parseAgentSessionRecords(
   let providerSessionId =
     input.source === "codex" ? "" : (claudeFields.sessionId ?? input.fallbackSessionId);
   let title = claudeFields.title ?? null;
+  const ompTitleSlot = input.source === "omp" ? records.find((record) => record.type === "title")?.title?.trim() : undefined;
   let model = claudeFields.model ?? null;
   let derivedTitle: string | undefined;
   let hasCodexSessionId = false;
@@ -547,7 +550,7 @@ function parseAgentSessionRecords(
     source: input.source,
     providerInstanceId: input.providerInstanceId,
     providerSessionId,
-    title: claudeFields.customTitle ?? title ?? derivedTitle ?? "Imported thread",
+    title: claudeFields.customTitle ?? (ompTitleSlot || title) ?? derivedTitle ?? "Imported thread",
     model,
     createdAt: retainedMessages[0]?.createdAt ?? fallbackTimestamp,
     updatedAt: fallbackTimestamp,
@@ -566,7 +569,7 @@ function shouldRetainDecodedRecord(
 ): boolean {
   if (source === "omp") {
     // Keep all parent-linked entries so an abandoned branch is not shown as live history.
-    return record.type === "session" || record.id !== undefined;
+    return record.type === "session" || record.type === "title" || record.id !== undefined;
   }
   if (source === "claudeAgent") {
     if (isHiddenClaudeRecord(record) || (record.type !== "user" && record.type !== "assistant")) {

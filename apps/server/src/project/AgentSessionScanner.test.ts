@@ -249,6 +249,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           filePath: sessionFile,
           mtimeMs: now,
           contents: [
+            { type: "title", title: "OMP existing conversation", updatedAt: "2026-10-27T11:30:00Z" },
             { type: "session", id: "omp-old-session", version: 3, cwd: workspace },
             { type: "message", id: "u1", parentId: null,
               timestamp: "2026-10-27T11:00:00Z", message: { role: "user", content: "Original" } },
@@ -279,6 +280,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           source: "omp",
           providerInstanceId: ProviderInstanceId.make("omp-bridge"),
           providerSessionId: "omp-old-session",
+          title: "OMP existing conversation",
           model: "openai/gpt-5",
           messages: [
             { role: "user", text: "Original" },
