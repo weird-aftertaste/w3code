@@ -25,3 +25,6 @@ jobs:
           node-version: "22"
       - run: npm test
       - run: npm pack --dry-run --json
+      # Test the zero-clone installation command against the tiny package-only branch.
+      - run: npm install --global "https://github.com/weird-aftertaste/w3code/archive/refs/heads/omp-bridge-standalone.tar.gz"
+      - run: npm list --global t3code-omp-bridge
