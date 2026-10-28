@@ -249,7 +249,10 @@ const make = Effect.gen(function* () {
               providerSessionId: thread.providerSessionId,
             });
           }
-          const driver = ProviderDriverKind.make(thread.source);
+          // OMP uses the Pi adapter through omp-t3-bridge, not a new driver kind.
+          const driver = ProviderDriverKind.make(thread.source === "omp" ? "pi" : thread.source);
+          // Pi switch_session requires the absolute JSONL path, not the OMP session UUID.
+          const nativeThreadId = thread.source === "omp" ? source.filePath : thread.providerSessionId;
           const persistRuntime = runtimes.upsert(
             {
               threadId,
@@ -262,7 +265,7 @@ const make = Effect.gen(function* () {
               resumeCursor:
                 thread.source === "codex"
                   ? { threadId: thread.providerSessionId }
-                  : { threadId, resume: thread.providerSessionId },
+                  : { threadId, resume: nativeThreadId },
               runtimePayload: { cwd: project.workspaceRoot },
             },
             { onConflict: "ignore" },
@@ -288,7 +291,7 @@ const make = Effect.gen(function* () {
           const providerThreadId = idAllocator.derive.providerThread({
             driver,
             providerInstanceId: thread.providerInstanceId,
-            nativeThreadId: thread.providerSessionId,
+            nativeThreadId,
           });
           const createdAt = dateTime(thread.createdAt);
           const updatedAt = dateTime(thread.updatedAt);
@@ -337,7 +340,7 @@ const make = Effect.gen(function* () {
             ownerNodeId: null,
             nativeThreadRef: {
               driver,
-              nativeId: thread.providerSessionId,
+              nativeId: nativeThreadId,
               strength: "strong",
             },
             nativeConversationHeadRef: null,

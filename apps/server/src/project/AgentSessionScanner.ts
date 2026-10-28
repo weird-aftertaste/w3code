@@ -78,6 +78,16 @@ const CodexTurnMetadata = Schema.Struct({
 
 const TranscriptRecord = Schema.Struct({
   type: Schema.optional(Schema.String),
+  // OMP session entries form a parent-linked tree; keep its identity and metadata.
+  id: Schema.optional(Schema.String),
+  parentId: Schema.optional(Schema.NullOr(Schema.String)),
+  version: Schema.optional(Schema.Number),
+  provider: Schema.optional(Schema.String),
+  modelId: Schema.optional(Schema.String),
+  role: Schema.optional(Schema.String),
+  model: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String),
+  title: Schema.optional(Schema.String),
   timestamp: Schema.optional(Schema.String),
   cwd: Schema.optional(Schema.String),
   sessionId: Schema.optional(Schema.String),
@@ -307,12 +317,38 @@ function parseAgentSessionRecords(
   records: ReadonlyArray<DecodedTranscriptRecord>,
   claudeFields: ClaudeFields,
 ): AgentSessionThread | null {
+  if (input.source === "omp") {
+    const session = records.find((record) => record.type === "session");
+    if (!session?.id || (session.version !== 2 && session.version !== 3)) return null;
+    // Recent OMP files begin with a fixed-width title slot before the header.
+    const titleSlot = records.find((record) => record.type === "title");
+
+    // Only import the active branch: OMP persists abandoned/alternative branches too.
+    const byId = new Map(records.flatMap((record) =>
+      record.id && record.type !== "session" ? [[record.id, record] as const] : [],
+    ));
+    const latest = [...byId.values()].at(-1);
+    if (!latest) return null;
+    const branch: Array<DecodedTranscriptRecord> = [];
+    const visited = new Set<string>();
+    let entry: DecodedTranscriptRecord | undefined = latest;
+    while (entry) {
+      if (!entry.id || visited.has(entry.id) || entry.parentId === undefined) return null;
+      visited.add(entry.id);
+      branch.push(entry);
+      entry = entry.parentId === null ? undefined : byId.get(entry.parentId);
+      if (entry === undefined && branch.at(-1)?.parentId !== null) return null;
+    }
+    records = [...(titleSlot ? [titleSlot] : []), session, ...branch.reverse()];
+  }
+
   const fallbackTimestamp = DateTime.formatIso(DateTime.makeUnsafe(input.lastActiveAtMs));
   // Claude filenames are session IDs. Codex rollout filenames include extra
   // timestamp text, so only transcript metadata can provide a resumable ID.
   let providerSessionId =
     input.source === "codex" ? "" : (claudeFields.sessionId ?? input.fallbackSessionId);
-  const title = claudeFields.title ?? null;
+  let title = claudeFields.title ?? null;
+  const ompTitleSlot = input.source === "omp" ? records.find((record) => record.type === "title")?.title?.trim() : undefined;
   let model = claudeFields.model ?? null;
   let derivedTitle: string | undefined;
   let hasCodexSessionId = false;
@@ -419,6 +455,30 @@ function parseAgentSessionRecords(
       continue;
     }
 
+    if (input.source === "omp") {
+      if (record.type === "session") {
+        providerSessionId = record.id?.trim() ?? "";
+        title = record.title?.trim() || title;
+      }
+      if (record.type === "session_info") title = record.name?.trim() || title;
+      if (record.type === "title_change") title = record.title?.trim() || title;
+      if (record.type === "model_change" && (!record.role || record.role === "default")) {
+        model = record.model ??
+          (record.provider && record.modelId ? `${record.provider}/${record.modelId}` : model);
+      }
+      const role = record.message?.role;
+      if (record.type !== "message" || (role !== "user" && role !== "assistant")) continue;
+      const text = extractText(record.message?.content);
+      if (text.length === 0) continue;
+      retainMessage({
+        role,
+        text,
+        createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
+        codexResponseUser: false,
+      });
+      continue;
+    }
+
     if (record.type === "session_meta") {
       const sessionId = record.payload?.id?.trim() || record.payload?.session_id?.trim();
       if (!hasCodexSessionId && sessionId) {
@@ -490,7 +550,7 @@ function parseAgentSessionRecords(
     source: input.source,
     providerInstanceId: input.providerInstanceId,
     providerSessionId,
-    title: claudeFields.customTitle ?? title ?? derivedTitle ?? "Imported thread",
+    title: claudeFields.customTitle ?? (ompTitleSlot || title) ?? derivedTitle ?? "Imported thread",
     model,
     createdAt: retainedMessages[0]?.createdAt ?? fallbackTimestamp,
     updatedAt: fallbackTimestamp,
@@ -507,6 +567,10 @@ function shouldRetainDecodedRecord(
   source: AgentSessionSource,
   record: DecodedTranscriptRecord,
 ): boolean {
+  if (source === "omp") {
+    // Keep all parent-linked entries so an abandoned branch is not shown as live history.
+    return record.type === "session" || record.type === "title" || record.id !== undefined;
+  }
   if (source === "claudeAgent") {
     if (isHiddenClaudeRecord(record) || (record.type !== "user" && record.type !== "assistant")) {
       return false;
@@ -915,8 +979,8 @@ export const make = Effect.gen(function* () {
   };
 
   const discoverClaudeTranscripts = Effect.fn("AgentSessionScanner.discoverClaudeTranscripts")(
-    function* (homePath: string, providerInstanceId: ProviderInstanceId, operationBudget: number) {
-      const projectsDir = path.join(homePath, "projects");
+    function* (transcriptsRoot: string, providerInstanceId: ProviderInstanceId, operationBudget: number) {
+      const projectsDir = transcriptsRoot;
       let operationsRemaining = operationBudget;
       let truncated = false;
       const readDirectory = (directory: string) => {
@@ -1081,19 +1145,27 @@ export const make = Effect.gen(function* () {
     const raw: Array<RawCandidate> = [];
     let truncated = false;
 
-    for (const source of ["claudeAgent", "codex"] as const) {
+    for (const source of ["claudeAgent", "codex", "omp"] as const) {
       const instances: Array<{
         readonly instanceId: ProviderInstanceId;
         readonly config: ProviderInstanceConfig;
       }> = Object.entries(settings.providerInstances)
-        .filter(
-          ([, instance]) => instance.driver === source && resolveProviderInstanceEnabled(instance),
-        )
+        .filter(([, instance]) => {
+          if (!resolveProviderInstanceEnabled(instance)) return false;
+          if (source !== "omp") return instance.driver === source;
+          if (instance.driver !== "pi") return false;
+          // Never scan normal Pi history: OMP is a separately configured Pi instance.
+          const config = instance.config;
+          const binary = typeof config === "object" && config !== null &&
+            "binaryPath" in config ? config.binaryPath : undefined;
+          return typeof binary === "string" &&
+            /(?:^|[/\\])omp-t3-bridge(?:\.cmd|\.exe)?$/i.test(binary.trim());
+        })
         .map(([instanceId, config]) => ({
           instanceId: ProviderInstanceId.make(instanceId),
           config,
         }));
-      if (!Object.hasOwn(settings.providerInstances, source)) {
+      if (source !== "omp" && !Object.hasOwn(settings.providerInstances, source)) {
         const defaultInstance = {
           instanceId: ProviderInstanceId.make(source),
           config: { driver: ProviderDriverKind.make(source) },
@@ -1108,20 +1180,27 @@ export const make = Effect.gen(function* () {
         const rightDefault = right.instanceId === source ? 0 : 1;
         return leftDefault - rightDefault;
       });
-      const homes: Array<{ homePath: string; providerInstanceId: ProviderInstanceId }> = [];
+      const homes: Array<{
+        homePath: string;
+        providerInstanceId: ProviderInstanceId;
+        transcriptDir?: string;
+      }> = [];
       const seenHomes = new Set<string>();
       for (const { instanceId, config: instance } of instances) {
-        const homeVariable = source === "claudeAgent" ? "CLAUDE_CONFIG_DIR" : "CODEX_HOME";
-        const environmentHome =
-          instance.environment?.findLast((variable) => variable.name === homeVariable)?.value ??
-          hostEnvironment[homeVariable];
+        const environmentValue = (name: string) =>
+          instance.environment?.findLast((variable) => variable.name === name)?.value ??
+          hostEnvironment[name];
+        const homeVariable =
+          source === "claudeAgent" ? "CLAUDE_CONFIG_DIR" :
+          source === "codex" ? "CODEX_HOME" : "PI_CODING_AGENT_DIR";
+        const environmentHome = environmentValue(homeVariable);
 
         let homePath: string;
         if (source === "claudeAgent") {
           const config = decodeClaudeSettings(instance.config ?? {});
           if (Option.isNone(config)) continue;
           homePath = resolveClaudeConfigDir(config.value.homePath, environmentHome);
-        } else {
+        } else if (source === "codex") {
           const config = decodeCodexSettings(instance.config ?? {});
           if (Option.isNone(config)) continue;
           const codexSettings =
@@ -1134,12 +1213,29 @@ export const make = Effect.gen(function* () {
             Effect.provideService(Path.Path, path),
           );
           homePath = layout.sharedHomePath;
+        } else {
+          // Profile sessions have their own roots. Do not guess a location when a
+          // profile is selected; respect explicit agent/session directory overrides.
+          if ((environmentValue("OMP_PROFILE") ?? environmentValue("PI_PROFILE"))?.trim()) continue;
+          const configDir = environmentValue("PI_CONFIG_DIR")?.trim() || ".omp";
+          homePath = path.resolve(expandHomePath(
+            environmentHome?.trim() || path.join(homeDir, configDir, "agent"),
+            homeDir,
+          ));
         }
 
-        const homeKey = `${source}\0${yield* directoryIdentity(homePath)}`;
+        const sessionOverride = source === "omp"
+          ? environmentValue("PI_CODING_AGENT_SESSION_DIR")?.trim()
+          : undefined;
+        const transcriptDir = source === "omp"
+          ? sessionOverride
+            ? path.resolve(expandHomePath(sessionOverride, homeDir))
+            : path.join(homePath, "sessions")
+          : undefined;
+        const homeKey = `${source}\0${yield* directoryIdentity(transcriptDir ?? homePath)}`;
         if (seenHomes.has(homeKey)) continue;
         seenHomes.add(homeKey);
-        homes.push({ homePath, providerInstanceId: instanceId });
+        homes.push({ homePath, providerInstanceId: instanceId, transcriptDir });
       }
 
       const transcriptCandidates: Array<TranscriptCandidate> = [];
@@ -1153,9 +1249,13 @@ export const make = Effect.gen(function* () {
           truncated = true;
           continue;
         }
-        const discovered = yield* source === "claudeAgent"
-          ? discoverClaudeTranscripts(home.homePath, home.providerInstanceId, operationBudget)
-          : discoverCodexTranscripts(home.homePath, home.providerInstanceId, operationBudget);
+        const discovered = yield* source === "codex"
+          ? discoverCodexTranscripts(home.homePath, home.providerInstanceId, operationBudget)
+          : discoverClaudeTranscripts(
+              source === "omp" ? home.transcriptDir! : path.join(home.homePath, "projects"),
+              home.providerInstanceId,
+              operationBudget,
+            );
         truncated ||= discovered.truncated;
         transcriptCandidates.push(...discovered.transcripts);
       }
@@ -1329,7 +1429,7 @@ export const make = Effect.gen(function* () {
       for (const transcript of candidate.transcripts) {
         if (
           transcript.mtimeMs === null ||
-          transcript.mtimeMs < cutoffMs ||
+          (candidate.source !== "omp" && transcript.mtimeMs < cutoffMs) ||
           transcript.mtimeMs > nowMs
         ) {
           continue;
