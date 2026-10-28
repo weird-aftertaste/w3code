@@ -1,16 +1,16 @@
-# Instructions for an installation agent
+# Installation instructions for a server agent
 
-The user wants to install this **experimental OMP RPC bridge** on the host running their T3 Code server, without rebuilding or modifying T3 Code.
+Goal: install the **standalone experimental OMP bridge** on the machine or container where the user's **official T3 Code server** runs. Do not fork or build T3 Code. Do not touch old OMP sessions or change the normal Pi provider.
 
-1. Verify whether this host runs the T3 Code server. If it is a remote/client-only machine, locate the server host first.
-2. Check prerequisites: `node --version` (>= 20), `npm --version`, `git --version`, `omp --version`. Do not replace a working installation without justification.
-3. Install the package from this repository as documented in README.md: `npm install -g .` from the cloned root. You may use a user-level npm prefix if global permissions prohibit writing to the system prefix.
-4. Verify the bridge version pass-through: `omp-t3-bridge --version` on Linux/macOS or `omp-t3-bridge.cmd --version` on Windows. Exit code must be zero and version should match `omp --version`.
-5. Run `npm test`. These are mocked tests; don't treat them as proof of end-to-end compatibility.
-6. Configure a *new, additional Pi provider instance* named `Oh My Pi` in T3 Code: binary path `omp-t3-bridge` (or absolute path); empty launch args; enabled. **Never replace or remove the existing Pi provider.**
-7. For any T3 Code process started as a service/container, make sure the installed bridge, Node.js and OMP executables are visible **inside the same service/container execution environment**, with the appropriate PATH and credentials. Restart only the relevant service if necessary.
-8. Refresh provider status. If it fails, collect errors without revealing secrets. Check `OMP_REAL_BINARY` if the OMP binary isn't found. On Windows favor a native `omp.exe`, since Node.js spawn of npm `.cmd` shims may fail.
-9. Do not use Full access, disable approvals, or modify production project files until permissions, MCP and tool use have been validated. Start with a disposable project and a read-only prompt.
-10. Report to the user what was installed, version checks, npm test results, provider status, remaining blockers, and any modifications made.
+1. Check `node --version` (Node >=20), `npm --version` and `omp --version`. Confirm OMP is authenticated for the service user; don't reveal credentials.
+2. Install directly without cloning a repository manually:
+   `npm install -g "github:weird-aftertaste/w3code#omp-bridge-standalone"`.
+   This GitHub branch is a small package-only tree. If npm needs Git, install Git as a prerequisite. Alternatively use the archive URL in README.md.
+3. Check the installed executable: `omp-t3-bridge --version` (PowerShell: `omp-t3-bridge.cmd --version`). Ensure it agrees with `omp --version` and exits 0.
+4. In T3 Code → Settings → Providers, add another **Pi** instance: display name `Oh My Pi`, binary path `omp-t3-bridge` (or full executable path), no extra launch args, enabled. Preserve normal Pi.
+5. If the app runs inside Docker/systemd/another user, validate PATH and executable/credential visibility **within the running T3 server environment**. Don't install on the client device by accident.
+6. Refresh provider status. If it fails, inspect stderr and paths, and set `OMP_REAL_BINARY` to the native OMP binary location if needed.
+7. Safety: the bridge alone does not enforce permissions. Use a disposable project and a read-only test first. Do not enable Full access until approvals and MCP are verified. Existing CLI sessions are not auto-imported.
+8. Report installation commands, versions, provider status, issues and any changes to the machine. Do not claim success without an end-to-end OMP test.
 
-This is an optional compatibility shim. No upstream T3 Code source modification is required. Do not merge this standalone Git branch into `main`; its root tree deliberately excludes the T3 Code source.
+The short registry command `npm install -g t3code-omp-bridge` will only work after the package has actually been published to npmjs.com.

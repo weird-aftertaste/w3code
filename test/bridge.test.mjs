@@ -10,8 +10,9 @@ const shim = resolve(dir, '../bin/omp-t3-bridge.mjs');
 const fakeOmp = resolve(dir, './fake-omp.mjs');
 
 function harness() {
-  const proc = spawn(process.execPath, [shim, '--mode', 'rpc', '--session', '/tmp/old-pi-session.jsonl'], {
-    env: { ...process.env, OMP_REAL_BINARY: fakeOmp }, stdio: ['pipe', 'pipe', 'pipe'],
+  const proc = spawn(process.execPath, [shim, fakeOmp, '--mode', 'rpc', '--session', '/tmp/old-pi-session.jsonl'], {
+    // Use node as the fake executable so tests run on Windows without Unix shebang execution.
+    env: { ...process.env, OMP_REAL_BINARY: process.execPath }, stdio: ['pipe', 'pipe', 'pipe'],
   });
   const messages = [];
   const waiters = [];
@@ -65,8 +66,8 @@ test('reassembles OMP protocol v2 rpc_chunk frames into one JSONL result', async
 
 
 test('passes plain-text --version output and exit code through to T3 health check', async () => {
-  const proc = spawn(process.execPath, [shim, '--version'], {
-    env: { ...process.env, OMP_REAL_BINARY: fakeOmp }, stdio: ['ignore', 'pipe', 'pipe'],
+  const proc = spawn(process.execPath, [shim, fakeOmp, '--version'], {
+    env: { ...process.env, OMP_REAL_BINARY: process.execPath }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   const chunks = [];
   const errs = [];

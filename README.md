@@ -1,66 +1,90 @@
-# OMP ↔ T3 Code bridge
+# T3 Code ↔ OMP Bridge
 
-A standalone compatibility bridge allowing **Oh My Pi (OMP)** to run as a second **Pi** provider instance in upstream [T3 Code](https://github.com/pingdotgg/t3code). There is no need to patch, build, or fork T3 Code to install this package.
+A **standalone npm package** that starts [Oh My Pi (OMP)](https://github.com/can1357/oh-my-pi) through T3 Code's existing **Pi** provider. **No T3 Code fork or build is required.**
 
-**Status: experimental.** RPC parsing and `--version` handling have mock tests. The full integration (permissions, MCP, sessions, rollback and Windows process handling) has **not** been end-to-end validated. Test in a disposable workspace, and do not enable Full access until permission handling is verified.
+> **Experimental:** the bridge has mock-RPC tests, but end-to-end operation with your OMP CLI, tool approvals, MCP and native session resume is not fully verified. Use a disposable workspace and avoid Full access until permissions have been verified.
 
-## Install on the server where T3 Code runs
+## One-command installation
 
-Requires **Node.js 20+**, npm, Git and an installed/authenticated OMP CLI. On Linux/macOS:
+The package is **prepared for the public npm registry, but not published there yet**. Until the first npm release, install the package directly from its *small standalone Git branch*:
 
-```bash
-node --version
+```sh
+npm install -g "github:weird-aftertaste/w3code#omp-bridge-standalone"
+```
+
+**This does not require manually cloning or building the T3 Code repository.** npm may use Git internally to resolve the GitHub source; Git must be installed for that command. The selected branch's root tree contains only the bridge files, not the T3 Code monorepo.
+
+Alternatively, using the GitHub branch source archive (no separate git clone command):
+
+```sh
+npm install -g "https://github.com/weird-aftertaste/w3code/archive/refs/heads/omp-bridge-standalone.tar.gz"
+```
+
+Once the package is **actually published** on npmjs.com, the intended shorter command is:
+
+```sh
+npm install -g t3code-omp-bridge
+```
+
+Do **not** assume the short npm registry command works before the initial publication.
+
+**Prerequisites:** Node.js 20+, npm, and a working authenticated OMP CLI on **the same host or container where the T3 Code server runs**. In particular, `omp --version` must work as the T3 server user. For Windows, a native `omp.exe` is preferable; spawning npm `.cmd` shims from Node can fail.
+
+Verify after installation:
+
+```sh
 omp --version
-git clone --depth 1 --single-branch --branch omp-bridge-standalone https://github.com/weird-aftertaste/w3code.git t3code-omp-bridge
-cd t3code-omp-bridge
-npm install -g .
 omp-t3-bridge --version
-npm test
 ```
 
-The clone is intentionally shallow and contains only this package, **not** the whole T3 Code monorepo. If `npm install -g` fails with EACCES, use a correctly configured user-level npm global prefix instead of blindly running sudo. Restart the T3 Code server process when PATH changes.
-
-On Windows PowerShell (OMP should preferably be a native `omp.exe`):
-
-```powershell
-git clone --depth 1 --single-branch --branch omp-bridge-standalone https://github.com/weird-aftertaste/w3code.git t3code-omp-bridge
-cd t3code-omp-bridge
-npm install -g .
-omp-t3-bridge.cmd --version
-npm test
-```
+In Windows PowerShell use `omp-t3-bridge.cmd --version` if necessary.
 
 ## Configure T3 Code
 
-In **Settings → Providers**, create an *additional Pi instance*:
+In **Settings → Providers**, create a *second Pi instance*; keep the original Pi instance unchanged:
 
 - **Display name:** `Oh My Pi`
-- **Binary path:** `omp-t3-bridge` (or the full path; on Windows, use `omp-t3-bridge.cmd` when necessary)
-- **Launch arguments:** empty
+- **Binary path:** `omp-t3-bridge` (on Windows, use `omp-t3-bridge.cmd` or its absolute path if not resolved)
+- **Launch arguments:** leave empty
 - **Enabled:** yes
 
-Refresh providers. This remains a separately named **Pi** instance, not a native `omp` driver.
+Then refresh providers. If OMP is not on the service's PATH, set the provider environment variable `OMP_REAL_BINARY` to the absolute path of a **native executable**. The bridge inherits regular provider environment variables for model credentials.
 
-If the bridge cannot find OMP, set the instance environment variable `OMP_REAL_BINARY` to the absolute path of the native `omp` executable. For Windows, avoid pointing it to an npm `.cmd` shim unless you have verified it works.
+**Existing OMP session history is not imported** by this standalone bridge on official T3 Code. It handles new Pi-backed OMP RPC sessions only; the separate T3 fork's importer is not needed for the bridge and is not included here.
 
-## Update
+## Updating
 
-In the installation folder:
+Before npm publication, update the GitHub install using the same command:
 
-```bash
-git pull --ff-only origin omp-bridge-standalone
-npm install -g .
+```sh
+npm install -g "github:weird-aftertaste/w3code#omp-bridge-standalone"
 ```
 
-## How it works
+Once published in the registry, `npm update -g t3code-omp-bridge` can be used.
 
-- Runs installed `omp --mode rpc` with arguments supplied by T3 Code.
-- Translates Pi `--session` to OMP `--resume`.
-- Translates `get_commands` to `get_available_commands`.
-- Converts OMP `session_settled` to Pi `agent_settled`.
-- Negotiates RPC protocol v2, reassembles chunked output and passes CLI health-check output through unchanged.
-- Passes other RPC events and messages without changing T3 Code.
+## Development and publishing
 
-For tests: `npm test`. These tests use a fake OMP executable, not real credentials. See [AGENTS.md](./AGENTS.md) for installation-agent instructions.
+The root of the `omp-bridge-standalone` branch is a publishable npm package: it has `package.json`, an executable `bin` entry, an MIT license, test suite and a clean package allowlist. No runtime dependencies or build step are needed.
 
-Source of this package is also maintained at `tools/omp-bridge/` on the `feature/omp` branch of [weird-aftertaste/w3code](https://github.com/weird-aftertaste/w3code/tree/feature/omp/tools/omp-bridge). This standalone branch intentionally contains only the bridge and must **not** be merged into T3 Code's `main`.
+For a maintainer with npm publishing rights:
+
+```sh
+npm test
+npm pack --dry-run
+npm login
+npm publish --access public
+```
+
+The package name `t3code-omp-bridge` must be available in the npm registry and the publisher must have permission to publish it. **Nothing has been published automatically.** Future publish automation can use npm's trusted publisher support.
+
+## Implementation
+
+- Launch OMP in RPC mode while forwarding Pi's normal CLI arguments.
+- Translate Pi `--session` to OMP `--resume`.
+- Translate Pi `get_commands` to OMP `get_available_commands`.
+- Translate `session_settled` to `agent_settled`.
+- Negotiate RPC v2 and reassemble chunked messages.
+- Forward text CLI health checks such as `--version`.
+- Leave the existing T3 Code source and interface unchanged.
+
+This standalone branch must **not** be merged into T3 Code's `main`. Detailed installation-agent instructions are in [AGENTS.md](./AGENTS.md).
