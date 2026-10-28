@@ -66,3 +66,22 @@ npm test
 ```
 
 Tests use a fake OMP process and require no real API credentials.
+
+
+## Import existing OMP sessions (fork build only)
+
+The **standalone bridge does not import old CLI sessions** in an unmodified T3 Code installation.
+On the `feature/omp` fork, T3's project scanner recognizes enabled Pi instances whose
+binary path ends with `omp-t3-bridge` or `omp-t3-bridge.cmd`. It scans their
+OMP history (`~/.omp/agent/sessions/<project>/*.jsonl`) and offers recent threads
+during project import in the onboarding/project picker.
+
+For an alternative location, set the instance environment variable
+`PI_CODING_AGENT_DIR` (agent root) or `PI_CODING_AGENT_SESSION_DIR`
+(the directory containing project/session folders). An active `OMP_PROFILE`
+or `PI_PROFILE` is not yet supported for discovery. Sessions remain where
+OMP created them; the importer stores the original file path for resume.
+
+**Important:** Running the **official** T3 Code app with this bridge alone will
+not enable the new importer. That requires building/running the fork's server
+and frontend. Do not change/delete the original OMP session files while testing.

@@ -235,6 +235,87 @@ const makeFileIdentityFixture = Effect.fn("AgentSessionScanner.test.makeFileIden
 
 it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
   describe("scan", () => {
+    it.effect("discovers OMP sessions only for the bridge and keeps the active branch", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3-omp-claude-");
+        const codexHomePath = yield* makeTempDir("t3-omp-codex-");
+        const ompHomePath = yield* makeTempDir("t3-omp-agent-");
+        const workspace = yield* makeTempDir("t3-omp-workspace-");
+        const now = Date.parse("2026-10-27T12:00:00.000Z");
+        yield* TestClock.setTime(now);
+        const sessionFile = path.join(ompHomePath, "sessions", "project", "old.jsonl");
+        yield* writeTranscript({
+          filePath: sessionFile,
+          mtimeMs: now,
+          contents: [
+            { type: "session", id: "omp-old-session", version: 3, cwd: workspace },
+            { type: "message", id: "u1", parentId: null,
+              timestamp: "2026-10-27T11:00:00Z", message: { role: "user", content: "Original" } },
+            { type: "message", id: "orphan", parentId: "u1",
+              message: { role: "assistant", content: [{ type: "text", text: "Discarded branch" }] } },
+            { type: "model_change", id: "model", parentId: "u1",
+              provider: "openai", modelId: "gpt-5" },
+            { type: "message", id: "a1", parentId: "model",
+              message: { role: "assistant", content: [{ type: "text", text: "Active branch" }] } },
+          ].map((value) => JSON.stringify(value)).join("\n") + "\n",
+        });
+
+        const providerInstances = {
+          [ProviderInstanceId.make("omp-bridge")]: {
+            driver: ProviderDriverKind.make("pi"),
+            config: { binaryPath: "omp-t3-bridge" },
+            environment: [{ name: "PI_CODING_AGENT_DIR", value: ompHomePath, sensitive: false }],
+          },
+        };
+        const config = { claudeHomePath, codexHomePath, workspaceRoot: workspace, providerInstances };
+        const scan = yield* runScan(config);
+        expect(scan.candidates).toMatchObject([
+          { path: workspace, sources: ["omp"], threadCount: 1 },
+        ]);
+        const threads = yield* runRecentThreads(config);
+        expect(threads).toHaveLength(1);
+        expect(threads[0]).toMatchObject({
+          source: "omp",
+          providerInstanceId: ProviderInstanceId.make("omp-bridge"),
+          providerSessionId: "omp-old-session",
+          model: "openai/gpt-5",
+          messages: [
+            { role: "user", text: "Original" },
+            { role: "assistant", text: "Active branch" },
+          ],
+        });
+      }),
+    );
+
+    it.effect("does not scan OMP history for an ordinary Pi instance", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3-omp-claude-");
+        const codexHomePath = yield* makeTempDir("t3-omp-codex-");
+        const ompHomePath = yield* makeTempDir("t3-omp-agent-");
+        const workspace = yield* makeTempDir("t3-omp-workspace-");
+        yield* writeTranscript({
+          filePath: path.join(ompHomePath, "sessions", "project", "old.jsonl"),
+          mtimeMs: Date.parse("2026-10-27T12:00:00Z"),
+          contents: JSON.stringify({
+            type: "session", id: "omp-old-session", version: 3, cwd: workspace,
+          }) + "\n",
+        });
+        const scan = yield* runScan({
+          claudeHomePath, codexHomePath,
+          providerInstances: {
+            [ProviderInstanceId.make("normal-pi")]: {
+              driver: ProviderDriverKind.make("pi"),
+              config: { binaryPath: "pi" },
+              environment: [{ name: "PI_CODING_AGENT_DIR", value: ompHomePath, sensitive: false }],
+            },
+          },
+        });
+        expect(scan.candidates).toEqual([]);
+      }),
+    );
+
     it.effect("reads Claude project cwds from transcripts, newest first", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
